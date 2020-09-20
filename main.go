@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"k8s.io/api/networking/v1beta1"
+	"k8s.io/api/extensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
@@ -81,7 +81,7 @@ func routineWatchIngresses(ctx context.Context) (err error) {
 
 func onceWatchIngress(ctx context.Context) (err error) {
 	var w watch.Interface
-	if w, err = gClient.NetworkingV1beta1().Ingresses("").Watch(ctx, metav1.ListOptions{}); err != nil {
+	if w, err = gClient.ExtensionsV1beta1().Ingresses("").Watch(ctx, metav1.ListOptions{}); err != nil {
 		return
 	}
 	for e := range w.ResultChan() {

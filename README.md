@@ -19,7 +19,7 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["watch"]
-  - apiGroups: [""]
+  - apiGroups: ["extensions"]
     resources: ["ingresses"]
     verbs: ["watch", "patch"]
 ---
