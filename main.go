@@ -2,26 +2,41 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"k8s.io/api/extensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 )
 
 const (
-	AnnotationKeyEnabled = "net.guoyk.auto-fix-tke-ingress/enabled"
+	AnnotationKeyEnabled    = "net.guoyk.auto-fix-tke-ingress/enabled"
+	AnnotationKeyHTTPRules  = "kubernetes.io/ingress.http-rules"
+	AnnotationKeyHTTPsRules = "kubernetes.io/ingress.https-rules"
 )
 
 var (
 	gConfig *rest.Config
 	gClient *kubernetes.Clientset
 )
+
+type ShitHTTPRule struct {
+	Host    string `json:"host,omitempty"`
+	Path    string `json:"path"`
+	Backend struct {
+		ServiceName string `json:"serviceName"`
+		ServicePort string `json:"servicePort"`
+	} `json:"backend"`
+}
 
 func exit(err *error) {
 	if *err != nil {
@@ -89,6 +104,56 @@ func onceWatchIngress(ctx context.Context) (err error) {
 		case watch.Added, watch.Modified:
 			ig := e.Object.(*v1beta1.Ingress)
 			log.Printf("%s: %s/%s", string(e.Type), ig.Namespace, ig.Name)
+			if ig.Annotations == nil {
+				continue
+			}
+			if enabled, _ := strconv.ParseBool(ig.Annotations[AnnotationKeyEnabled]); !enabled {
+				continue
+			}
+			var httpRules []ShitHTTPRule
+			for _, r := range ig.Spec.Rules {
+				if r.HTTP == nil {
+					continue
+				}
+				for _, p := range r.HTTP.Paths {
+					if p.Backend.ServicePort.Type != intstr.Int {
+						log.Printf("invalid ingress service port: %s, not a int", p.Backend.ServicePort.String())
+					}
+					var hr ShitHTTPRule
+					hr.Host = r.Host
+					hr.Path = p.Path
+					if hr.Path == "" {
+						hr.Path = "/"
+					}
+					hr.Backend.ServiceName = p.Backend.ServiceName
+					hr.Backend.ServicePort = strconv.Itoa(int(p.Backend.ServicePort.IntVal))
+					httpRules = append(httpRules, hr)
+				}
+			}
+			var rawHTTPRules []byte
+			if rawHTTPRules, err = json.Marshal(httpRules); err != nil {
+				return
+			}
+			patch := map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"annotations": map[string]interface{}{
+						AnnotationKeyHTTPRules: string(rawHTTPRules),
+					},
+				},
+			}
+			var rawPatch []byte
+			if rawPatch, err = json.Marshal(patch); err != nil {
+				return
+			}
+
+			if _, err = gClient.ExtensionsV1beta1().Ingresses(ig.Namespace).Patch(
+				ctx,
+				ig.Name,
+				types.StrategicMergePatchType,
+				rawPatch,
+				metav1.PatchOptions{}); err != nil {
+				return
+			}
 		}
 	}
 	return
